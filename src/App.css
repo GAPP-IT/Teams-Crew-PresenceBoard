@@ -1,0 +1,116 @@
+:root {
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  color: #202124;
+  background: #f5f6f8;
+  --background: #f5f6f8;
+  --surface: #ffffff;
+  --surface-secondary: #f7f8fa;
+  --border: #e2e5e9;
+  --text: #202124;
+  --text-secondary: #69707a;
+  --shadow: 0 8px 24px rgba(24, 31, 42, 0.08);
+  --brand: #172033;
+  --brand-contrast: #ffffff;
+  --yellow-bg: #fff4bf;
+  --yellow-border: #edc83f;
+  --yellow-text: #765d00;
+  --green-bg: #dff7e8;
+  --green-border: #58bd7c;
+  --green-text: #176b36;
+  --red-bg: #fee6e6;
+  --red-border: #e36d6d;
+  --red-text: #a22525;
+  --blue-bg: #e7f0ff;
+  --blue-border: #7fa9ea;
+  --blue-text: #295b9e;
+  --gray-bg: #eceff2;
+  --gray-border: #b9c0c8;
+  --gray-text: #59616b;
+}
+
+:root[data-theme="dark"] {
+  color: #f2f4f7;
+  background: #111418;
+  --background: #111418;
+  --surface: #1b2026;
+  --surface-secondary: #252b33;
+  --border: #363d46;
+  --text: #f2f4f7;
+  --text-secondary: #adb5c0;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  --brand: #f2f4f7;
+  --brand-contrast: #111418;
+  --yellow-bg: #514616;
+  --yellow-border: #d8b92d;
+  --yellow-text: #ffe77d;
+  --green-bg: #173d27;
+  --green-border: #3ca665;
+  --green-text: #8ce5aa;
+  --red-bg: #4a2020;
+  --red-border: #cc5858;
+  --red-text: #ff9b9b;
+  --blue-bg: #1d344f;
+  --blue-border: #4f86c9;
+  --blue-text: #9fc7fa;
+  --gray-bg: #313740;
+  --gray-border: #5b6571;
+  --gray-text: #c2c8d0;
+}
+
+body { background: var(--background); color: var(--text); }
+button { cursor: pointer; }
+.app { min-height: 100vh; }
+.topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; min-height: 78px; padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.brand { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.brand-logo { display: block; width: 120px; max-height: 48px; object-fit: contain; }
+:root[data-theme="dark"] .brand-logo { filter: invert(1); }
+.brand h1 { margin: 0; font-size: 20px; }
+.brand p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; }
+.topbar-actions { display: flex; gap: 8px; }
+.icon-button { display: grid; width: 40px; height: 40px; place-items: center; border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--surface-secondary); font-size: 20px; font-weight: 700; }
+.content { width: min(1600px, 100%); margin: 0 auto; padding: 20px 24px 40px; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); }
+.search-container { display: flex; flex: 1 1 280px; align-items: center; gap: 9px; height: 42px; padding: 0 13px; background: var(--surface-secondary); border: 1px solid var(--border); border-radius: 11px; }
+.search-container input { width: 100%; color: var(--text); background: transparent; border: 0; outline: 0; }
+.toolbar select, .toolbar-button { height: 42px; padding: 0 14px; color: var(--text); background: var(--surface-secondary); border: 1px solid var(--border); border-radius: 11px; }
+.toolbar-button.active, .view-switch button.active { color: var(--brand-contrast); background: var(--brand); }
+.view-switch { display: flex; gap: 4px; padding: 4px; background: var(--surface-secondary); border: 1px solid var(--border); border-radius: 11px; }
+.view-switch button { width: 34px; height: 32px; color: var(--text); background: transparent; border: 0; border-radius: 8px; }
+.status-line { display: flex; justify-content: space-between; gap: 16px; margin: 14px 2px; color: var(--text-secondary); font-size: 12px; }
+.error-message { padding: 12px 14px; margin-bottom: 14px; color: var(--red-text); background: var(--red-bg); border: 1px solid var(--red-border); border-radius: 12px; }
+.people-container { display: grid; gap: 14px; }
+.view-grid { grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); }
+.view-compact { grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
+.person-card { position: relative; display: flex; flex-direction: column; gap: 13px; min-width: 0; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 17px; box-shadow: var(--shadow); }
+.person-card.present-card { border-top: 4px solid var(--yellow-border); }
+.favorite-button { position: absolute; top: 10px; right: 11px; width: 34px; height: 34px; color: var(--text-secondary); background: transparent; border: 0; border-radius: 9px; font-size: 24px; }
+.favorite-button.is-favorite { color: #d5a900; }
+.person-header { display: flex; align-items: center; gap: 12px; min-width: 0; padding-right: 28px; }
+.avatar { display: grid; flex: 0 0 54px; width: 54px; height: 54px; overflow: hidden; place-items: center; color: #fff; background: linear-gradient(135deg, #40546e, #1d2836); border: 2px solid var(--border); border-radius: 50%; font-weight: 750; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.person-heading { min-width: 0; }
+.person-heading h2 { margin: 0; overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.person-heading p { margin: 3px 0; overflow: hidden; color: var(--text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.department { color: var(--text-secondary); font-size: 11px; }
+.primary-status-grid, .secondary-status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.status-box, .secondary-box { display: flex; align-items: center; gap: 9px; min-height: 58px; padding: 10px 11px; border: 1px solid; border-radius: 12px; }
+.status-box small, .secondary-box small { display: block; margin-bottom: 2px; opacity: .78; font-size: 10px; }
+.status-box strong, .secondary-box strong { display: block; font-size: 12px; }
+.status-dot { width: 10px; height: 10px; background: currentColor; border-radius: 50%; }
+.phone-icon { width: 18px; font-size: 17px; text-align: center; }
+.status-present { color: var(--yellow-text); background: var(--yellow-bg); border-color: var(--yellow-border); }
+.status-offline, .calendar-unknown, .workplace-unknown { color: var(--gray-text); background: var(--gray-bg); border-color: var(--gray-border); }
+.phone-free, .calendar-available { color: var(--green-text); background: var(--green-bg); border-color: var(--green-border); }
+.phone-busy, .calendar-unavailable { color: var(--red-text); background: var(--red-bg); border-color: var(--red-border); }
+.workplace-office, .workplace-home { color: var(--blue-text); background: var(--blue-bg); border-color: var(--blue-border); }
+.status-detail { display: block; margin-top: 3px; font-size: 9px; opacity: .78; }
+.view-compact .person-card { gap: 9px; padding: 12px; }
+.view-compact .avatar { flex-basis: 44px; width: 44px; height: 44px; font-size: 13px; }
+.dialog-backdrop { position: fixed; z-index: 100; display: grid; inset: 0; padding: 20px; place-items: center; background: rgba(0, 0, 0, .55); }
+.info-dialog { position: relative; width: min(540px, 100%); padding: 24px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 20px; box-shadow: 0 24px 70px rgba(0, 0, 0, .28); }
+.dialog-close { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; color: var(--text); background: var(--surface-secondary); border: 1px solid var(--border); border-radius: 10px; font-size: 23px; }
+.primary-button { padding: 10px 16px; color: var(--brand-contrast); background: var(--brand); border: 0; border-radius: 10px; }
+.empty-state { display: grid; min-height: 220px; place-items: center; align-content: center; color: var(--text-secondary); text-align: center; }
+.empty-state strong { margin-bottom: 6px; color: var(--text); }
+@media (max-width: 720px) { .topbar { padding: 10px 14px; } .brand-logo { width: 84px; } .brand h1 { font-size: 16px; } .brand p { display: none; } .content { padding: 14px; } .status-line { flex-direction: column; gap: 4px; } .view-grid, .view-compact { grid-template-columns: 1fr; } }
+@media (max-width: 390px) { .primary-status-grid, .secondary-status-grid { grid-template-columns: 1fr; } }

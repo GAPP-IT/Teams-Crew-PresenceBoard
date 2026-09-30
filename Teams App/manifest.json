@@ -1,0 +1,49 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.1",
+
+  "id": "7d4fbe60-7f0d-4f4c-93c9-123456789001",
+
+  "developer": {
+    "name": "ATEC IT",
+    "websiteUrl": "https://llrwffc6-5173.euw.devtunnels.ms",
+    "privacyUrl": "https://llrwffc6-5173.euw.devtunnels.ms",
+    "termsOfUseUrl": "https://llrwffc6-5173.euw.devtunnels.ms"
+  },
+
+  "name": {
+    "short": "Crew Presence",
+    "full": "Crew Presence Board"
+  },
+
+  "description": {
+    "short": "Teams Presence Dashboard",
+    "full": "Presence Dashboard für PAG, GAPP und EAC2"
+  },
+
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+
+  "accentColor": "#5B5FC7",
+
+  "staticTabs": [
+    {
+      "entityId": "presence-board",
+      "name": "Presence Board",
+      "contentUrl": "https://llrwffc6-5173.euw.devtunnels.ms",
+      "websiteUrl": "https://llrwffc6-5173.euw.devtunnels.ms",
+      "scopes": ["personal"]
+    }
+  ],
+
+  "permissions": [
+    "identity"
+  ],
+
+  "validDomains": [
+    "llrwffc6-5173.euw.devtunnels.ms"
+  ]
+}

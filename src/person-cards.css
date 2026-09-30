@@ -1,0 +1,78 @@
+.people-grid {
+  grid-template-columns: repeat(auto-fill, 356px);
+  justify-content: start;
+}
+
+.person-card {
+  min-width: 356px;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+@media (hover: hover) {
+  .person-card:hover {
+    transform: translateY(-3px);
+    border-color: #9bbdca;
+    box-shadow: 0 14px 30px rgba(23, 107, 135, 0.14);
+  }
+}
+
+.status-row {
+  flex-wrap: wrap;
+  min-width: 0;
+  row-gap: 4px;
+}
+
+.status-item {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.card-actions {
+  flex-wrap: wrap;
+}
+
+.card-actions .icon-button:disabled {
+  color: #64748b;
+}
+
+@media (max-width: 380px) {
+  .people-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .person-card {
+    min-width: 0;
+  }
+}
+
+.details-row {
+  flex-wrap: nowrap;
+  row-gap: 5px;
+  overflow: visible;
+}
+
+.details-row > .detail:not(.meeting) {
+  overflow: visible;
+}
+
+.details-row > .detail.meeting {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.details-row > .next-appointment {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appointment-icon {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+}
+
