@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as teamsJs from "@microsoft/teams-js";
 import {
-  ArrowLeft, Briefcase, Building2, CalendarDays, ChevronDown, Folder, Headphones, Heart,
-  Home, Info, Languages, Mail, MapPinOff, MessageCircle, Moon, Pencil, Phone, PhoneOff,
+  ArrowLeft, Briefcase, Building2, CalendarDays, ChevronDown, ChevronsDown, ChevronsUp, Folder, Headphones, Heart,
+  Home, Info, Languages, Mail, MapPin, MapPinOff, MessageCircle, Moon, Pencil, Phone, PhoneOff,
   RefreshCw, Search, SlidersHorizontal, Plus, Star, Sun, Tag, Trash2, Users, Video, VideoOff, X, Bell, BellOff
 } from "lucide-react";
 import { translate } from "./translations.js";
 
 const API = import.meta.env.VITE_API_BASE_URL || "/api";
+const USER_GUIDE_URL = "";
 const FAVORITES_KEY = "crewPresenceBoardFavorites";
 const FAVORITE_GROUPS_KEY = "crewPresenceBoardGroups";
 const FAVORITE_GROUP_COLLAPSED_KEY = "crewPresenceBoardCollapsedFavoriteGroups";
@@ -14,13 +16,17 @@ const THEME_KEY = "crewPresenceBoardTheme";
 const VIEW_KEY = "crewPresenceBoardDefaultView";
 const LANGUAGE_KEY = "crewPresenceBoardLanguage";
 const PRESENCE_NOTIFICATIONS_KEY = "crewPresenceBoardPresenceNotifications";
+const MEETING_ROOM_COMPANY = "__meeting_rooms__";
+const MISSING_COMPANY = "__missing_company__";
 const MISSING_DEPARTMENT = "__missing_department__";
 const MISSING_ROLE = "__missing_role__";
 
 const companies = [
   { id: "PAG", name: "Piper Deutschland AG", color: "#9A2F38" },
   { id: "GAPP", name: "Global Aviation + Piper Parts GmbH", color: "#486893" },
-  { id: "EAC2", name: "European Aviation Competence Center GmbH", color: "#F1880F" }
+  { id: "EAC2", name: "European Aviation Competence Center GmbH", color: "#F1880F" },
+  { id: MEETING_ROOM_COMPANY, name: "Besprechungsräume", color: "#83d0e7" },
+  { id: MISSING_COMPANY, name: "Ohne Firma", color: "#727C8A" }
 ];
 
 const presenceMap = {
@@ -77,7 +83,9 @@ function store(key, value) {
 }
 
 function companyId(value = "") {
-  const s = value.toLowerCase();
+  const s = String(value || "").trim().toLowerCase();
+  if (s.includes("meeting room") || s === MEETING_ROOM_COMPANY) return MEETING_ROOM_COMPANY;
+  if (!s || s === MISSING_COMPANY) return MISSING_COMPANY;
   if (s === "gapp" || s.includes("global aviation")) return "GAPP";
   if (s === "eac2" || s === "eacc" || s.includes("european aviation")) return "EAC2";
   return "PAG";
@@ -174,12 +182,13 @@ function Logo() {
   );
 }
 
-function IconButton({ icon: Icon, title, disabled, onClick, t, className = "" }) {
+function IconButton({ icon: Icon, title, ariaLabel, disabled, onClick, t, className = "" }) {
   return (
     <button
       className={`icon-button ${className}`}
       type="button"
       title={disabled ? t("actionUnavailable", { action: title }) : title}
+      aria-label={ariaLabel || title}
       disabled={disabled}
       onClick={onClick}
     >
@@ -232,10 +241,12 @@ function PersonCard({
     ...(absence ? presenceMap.offline : presenceStatus),
     label: t((absence ? presenceMap.offline : presenceStatus).labelKey)
   };
-  const phoneBarColor =
-    !absence && person.currentMeetingShowAs === "busy" ? "#8B5CF6" : p.color;
+  const phoneBarColor = p.color;
+  const isOnCall = person.phone === "call" || person.presence === "meeting";
   const teamsAway = !absence && person.presence === "away";
-  const phoneStatus = teamsAway
+  const phoneStatus = person.phone === "call"
+    ? phoneMap.call
+    : teamsAway
     ? { labelKey: "phoneFreeTeamsAway", color: "#F59E0B", icon: Phone }
     : person.presence === "dnd"
       ? { labelKey: "phoneUnavailable", color: "#C4314B", icon: PhoneOff }
@@ -243,8 +254,9 @@ function PersonCard({
   const PhoneIcon = phoneStatus.icon;
   const phoneLabel = t(phoneStatus.labelKey);
   const offline = Boolean(absence) || person.presence === "offline";
-  const callDisabled = Boolean(absence) || offline || person.presence === "dnd";
+  const callDisabled = Boolean(absence) || offline || person.presence === "dnd" || isOnCall;
   const showPhone = !absence && !offline;
+  const showPhoneStatus = showPhone && person.presence !== "meeting";
   const location =
     offline
       ? null
@@ -301,7 +313,7 @@ function PersonCard({
                 <i style={{ backgroundColor: p.color }} />
                 {p.label}
               </span>
-              {showPhone && (
+              {showPhoneStatus && (
                 <span className="status-item" style={{ color: phoneStatus.color }}>
                   <PhoneIcon size={11} />
                   {phoneLabel}
@@ -334,6 +346,7 @@ function PersonCard({
         )}
       </div>
       <div className="card-actions">
+        {/*
         <IconButton
           icon={watchingPresence ? BellOff : Bell}
           title={watchingPresence ? t("presenceNotificationStop") : t("presenceNotificationStart")}
@@ -341,6 +354,7 @@ function PersonCard({
           className={watchingPresence ? "is-watching" : ""}
           t={t}
         />
+        */}
         <IconButton
           icon={MessageCircle}
           title={t("chatStart")}
@@ -374,6 +388,221 @@ function PersonCard({
   );
 }
 
+function formatResourceDateTime(value, language) {
+  return new Intl.DateTimeFormat(language === "de" ? "de-DE" : "en-GB", {
+    weekday: "short",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function ResourceCard({ person, onOpenCalendar, onOpenInfo, t, language }) {
+  const schedule = Array.isArray(person.resourceSchedule) ? person.resourceSchedule : [];
+  const calendarAvailable = person.resourceCalendarAvailable !== false;
+  const occupied = schedule.filter((event) => event.showAs !== "free");
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    let timeoutId;
+    const updateAtNextBookingBoundary = () => {
+      const currentTime = Date.now();
+      setNow(currentTime);
+      const nextBoundary = schedule
+        .flatMap((event) => [new Date(event.start).getTime(), new Date(event.end).getTime()])
+        .filter((timestamp) => Number.isFinite(timestamp) && timestamp > currentTime)
+        .sort((left, right) => left - right)[0];
+
+      if (nextBoundary) {
+        timeoutId = window.setTimeout(updateAtNextBookingBoundary, nextBoundary - currentTime + 10);
+      }
+    };
+
+    updateAtNextBookingBoundary();
+    return () => window.clearTimeout(timeoutId);
+  }, [schedule]);
+
+  const currentBooking = calendarAvailable && occupied.find(
+    (event) => new Date(event.start).getTime() <= now && new Date(event.end).getTime() > now
+  );
+  const nextBooking = calendarAvailable && occupied.find((event) => new Date(event.start).getTime() > now);
+  const statusKey = !calendarAvailable
+    ? "resourceStatusUnavailable"
+    : currentBooking
+      ? "resourceOccupied"
+      : "resourceAvailable";
+  const statusColor = !calendarAvailable
+    ? "#747D8A"
+    : currentBooking
+      ? "#C4314B"
+      : "#35A853";
+  const detailText = !calendarAvailable
+    ? t("resourceCalendarUnavailable")
+    : currentBooking
+      ? t("resourceOccupiedUntil", {
+          time: formatResourceDateTime(currentBooking.end, language)
+        })
+      : nextBooking
+        ? t("resourceNextBooking", {
+            time: formatResourceDateTime(nextBooking.start, language)
+          })
+        : t("resourceNoUpcoming");
+
+  return (
+    <article className="person-card resource-person-card">
+      <div className="phone-bar" style={{ backgroundColor: statusColor }} />
+      <div className="avatar-wrap resource-avatar-wrap">
+        <div className="avatar resource-avatar" aria-hidden="true">
+          <Building2 size={19} />
+        </div>
+      </div>
+      <div className="person-content">
+        <div className="name-row">
+          <strong title={person.name}>{person.name}</strong>
+        </div>
+        <div className="role">{t("meetingRoomCompany")}</div>
+        <div className="status-row resource-status-row">
+          <span className="status-item" style={{ color: statusColor }}>
+            <i style={{ backgroundColor: statusColor }} />
+            {t(statusKey)}
+          </span>
+          {person.resourceCapacity != null && (
+            <span className="status-item resource-capacity" title={t("resourceCapacity", { count: person.resourceCapacity })}>
+              <Users size={13} />
+              {t("resourceCapacity", { count: person.resourceCapacity })}
+            </span>
+          )}
+        </div>
+        {person.resourceLocationDescription && (
+          <div className="details-row resource-meta-row">
+            <span className="detail" title={person.resourceLocationDescription}>
+              <MapPin size={13} />
+              <span>{person.resourceLocationDescription}</span>
+            </span>
+          </div>
+        )}
+        <div className="details-row">
+          <span className="detail meeting" title={detailText}>
+            <CalendarDays className="appointment-icon" size={11} />
+            {detailText}
+          </span>
+        </div>
+      </div>
+      <div className="card-actions">
+        <IconButton
+          icon={Info}
+          title={t("resourceOpenInfo")}
+          ariaLabel={`${t("resourceOpenInfo")}: ${person.name}`}
+          onClick={() => onOpenInfo(person)}
+          t={t}
+        />
+        <IconButton
+          icon={CalendarDays}
+          title={t("resourceOpenCalendar")}
+          ariaLabel={`${t("resourceOpenCalendar")}: ${person.name}`}
+          onClick={() => onOpenCalendar(person)}
+          t={t}
+        />
+      </div>
+    </article>
+  );
+}
+
+function ResourceCalendarModal({ person, onClose, t, language }) {
+  if (!person) return null;
+  const schedule = Array.isArray(person.resourceSchedule) ? person.resourceSchedule : [];
+  const upcomingBookings = schedule
+    .filter((event) => event.showAs !== "free" && new Date(event.end).getTime() > Date.now())
+    .sort((left, right) => new Date(left.start).getTime() - new Date(right.start).getTime())
+    .slice(0, 10);
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="info-dialog resource-calendar-dialog" role="dialog" aria-modal="true" aria-label={person.name}>
+        <button className="dialog-close" type="button" onClick={onClose} aria-label={t("close")}>
+          <X size={18} />
+        </button>
+        <h2>{person.name}</h2>
+        <p className="resource-calendar-subtitle">{t("resourceCalendarTitle")}</p>
+        {person.resourceCalendarAvailable === false ? (
+          <p className="resource-calendar-empty">{t("resourceCalendarUnavailable")}</p>
+        ) : upcomingBookings.length ? (
+          <div className="resource-calendar-list">
+            {upcomingBookings.map((event, index) => (
+              <div className="resource-calendar-entry" key={`${event.start}-${index}`}>
+                <span className={`resource-calendar-dot ${event.showAs === "free" ? "is-free" : "is-busy"}`} />
+                <div>
+                  <strong>
+                    {event.isAllDay
+                      ? t("resourceAllDay")
+                      : `${formatResourceDateTime(event.start, language)} – ${formatResourceDateTime(event.end, language)}`}
+                  </strong>
+                  <span>{t(event.showAs === "free" ? "resourceAvailable" : "resourceOccupied")}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="resource-calendar-empty">{t("resourceCalendarEmpty")}</p>
+        )}
+        <footer>
+          <button className="outline-button" type="button" onClick={onClose}>{t("close")}</button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function ResourceInfoModal({ person, onClose, t }) {
+  const [photoUnavailable, setPhotoUnavailable] = useState(false);
+  if (!person) return null;
+  const profilePhotoUrl = person.photoUrl || `${API}/users/${person.id}/photo`;
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="resource-calendar-dialog resource-info-dialog" role="dialog" aria-modal="true" aria-label={person.name}>
+        <button className="dialog-close" type="button" onClick={onClose} aria-label={t("close")}>
+          <X size={18} />
+        </button>
+        <h2>{person.name}</h2>
+        <p className="resource-calendar-subtitle">{t("resourceInfoTitle")}</p>
+        {photoUnavailable ? (
+          <div className="resource-info-photo-placeholder" aria-label={t("resourcePhotoUnavailable")}>
+            <Building2 size={38} />
+          </div>
+        ) : (
+          <img
+            className="resource-info-photo"
+            src={profilePhotoUrl}
+            alt={`${t("meetingRoomCompany")}: ${person.name}`}
+            onError={() => {
+              setPhotoUnavailable(true);
+            }}
+          />
+        )}
+        <dl className="resource-info-details">
+          {person.resourceLocationDescription && (
+            <div>
+              <dt>{t("resourceLocation")}</dt>
+              <dd>{person.resourceLocationDescription}</dd>
+            </div>
+          )}
+          {person.resourceCapacity != null && (
+            <div>
+              <dt>{t("resourceCapacityLabel")}</dt>
+              <dd>{t("resourceCapacity", { count: person.resourceCapacity })}</dd>
+            </div>
+          )}
+        </dl>
+        <footer>
+          <button className="outline-button" type="button" onClick={onClose}>{t("close")}</button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 function InfoModal({ open, onClose, defaultView, onDefaultView, t }) {
   if (!open) return null;
   return (
@@ -395,6 +624,23 @@ function InfoModal({ open, onClose, defaultView, onDefaultView, t }) {
           <h3>{t("aboutTitle")}</h3>
           <p>
             {t("aboutDescription")}
+          </p>
+          <p className="user-guide-link-row">
+            <a
+              className={`user-guide-link${USER_GUIDE_URL ? "" : " is-placeholder"}`}
+              href={USER_GUIDE_URL || undefined}
+              target={USER_GUIDE_URL ? "_blank" : undefined}
+              rel="noreferrer"
+              role="link"
+              tabIndex={USER_GUIDE_URL ? undefined : 0}
+              aria-disabled={!USER_GUIDE_URL}
+              onClick={(event) => {
+                if (!USER_GUIDE_URL) event.preventDefault();
+              }}
+            >
+              {t("userGuide")}
+              {!USER_GUIDE_URL && <span>{t("userGuideLinkPending")}</span>}
+            </a>
           </p>
           <h3>{t("updatesTitle")}</h3>
           <p>
@@ -418,6 +664,9 @@ export default function App() {
     const stored = readStored(PRESENCE_NOTIFICATIONS_KEY, []);
     return Array.isArray(stored) ? stored.map(String) : [];
   });
+  const [teamsContext, setTeamsContext] = useState({ ready: false, host: false });
+  const [teamsSubscriptionsReady, setTeamsSubscriptionsReady] = useState(false);
+  const [notificationToast, setNotificationToast] = useState(null);
   const [favoriteGroupsData, setFavoriteGroupsData] = useState(() => {
     const stored = readStored(FAVORITE_GROUPS_KEY, {});
     return {
@@ -432,6 +681,8 @@ export default function App() {
     const stored = readStored(FAVORITE_GROUP_COLLAPSED_KEY, {});
     return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
   });
+  const [collapsedCompanies, setCollapsedCompanies] = useState({});
+  const [collapsedDepartments, setCollapsedDepartments] = useState({});
   const [newFavoriteGroupName, setNewFavoriteGroupName] = useState("");
   const [editingFavoriteGroupId, setEditingFavoriteGroupId] = useState(null);
   const [favoriteGroupDraft, setFavoriteGroupDraft] = useState(null);
@@ -441,7 +692,7 @@ export default function App() {
   const [language, setLanguage] = useState(() =>
     readStored(LANGUAGE_KEY, "de") === "en" ? "en" : "de"
   );
-  const [sortOrder, setSortOrder] = useState("name-asc");
+  const [sortOrder, setSortOrder] = useState("availability");
   const [defaultView, setDefaultView] = useState(() => readStored(VIEW_KEY, "all"));
   const [view, setView] = useState(() => readStored(VIEW_KEY, "all"));
   const [query, setQuery] = useState("");
@@ -451,16 +702,53 @@ export default function App() {
   const [location, setLocation] = useState("all");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [resourceCalendarPerson, setResourceCalendarPerson] = useState(null);
+  const [resourceInfoPerson, setResourceInfoPerson] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const previousPeopleRef = useRef(null);
   const notificationRegistrationRef = useRef(null);
+  const notificationToastTimeoutRef = useRef(null);
+  const teamsSubscriptionQueueRef = useRef(Promise.resolve());
+  const teamsNotificationErrorReportedRef = useRef(false);
+  const loadInProgressRef = useRef(false);
   const t = useMemo(
     () => (key, values) => translate(language, key, values),
     [language]
   );
+  const syncTeamsSubscriptions = useCallback(async (method, personIds) => {
+    const accessToken = await teamsJs.authentication.getAuthToken();
+    const response = await fetch(`${API}/teams/notifications/subscriptions`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        ...(method === "PUT" ? { "Content-Type": "application/json" } : {})
+      },
+      ...(method === "PUT" ? { body: JSON.stringify({ personIds }) } : {})
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Teams notification setup failed.");
+    teamsNotificationErrorReportedRef.current = false;
+    return data;
+  }, []);
+  const reportTeamsNotificationError = useCallback((error) => {
+    console.warn("Teams notifications could not be synchronized.", error);
+    if (teamsNotificationErrorReportedRef.current) return;
+    teamsNotificationErrorReportedRef.current = true;
+    setNotificationToast({
+      title: t("teamsNotificationSetupTitle"),
+      body: t("teamsNotificationSetupBody")
+    });
+  }, [t]);
+  const enqueueTeamsSubscriptionSync = useCallback((operation) => {
+    teamsSubscriptionQueueRef.current = teamsSubscriptionQueueRef.current
+      .catch(() => {})
+      .then(operation);
+    return teamsSubscriptionQueueRef.current;
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -482,6 +770,71 @@ export default function App() {
       });
     return undefined;
   }, []);
+  useEffect(() => {
+    let active = true;
+    teamsJs.app.initialize()
+      .then(() => teamsJs.app.getContext())
+      .then((context) => {
+        if (active) {
+          setTeamsContext({ ready: true, host: context.app?.host?.name === "teams" });
+        }
+      })
+      .catch(() => {
+        if (active) setTeamsContext({ ready: true, host: false });
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!teamsContext.ready || !teamsContext.host) return undefined;
+    let active = true;
+    enqueueTeamsSubscriptionSync(async () => {
+      const data = await syncTeamsSubscriptions("GET");
+      if (!active) return;
+      setPresenceNotifications((current) =>
+        [...new Set([...data.personIds, ...current.map(String)])]
+      );
+      setTeamsSubscriptionsReady(true);
+    }).catch((error) => {
+      if (active) reportTeamsNotificationError(error);
+    });
+    return () => {
+      active = false;
+    };
+  }, [teamsContext.ready, teamsContext.host, syncTeamsSubscriptions, enqueueTeamsSubscriptionSync, reportTeamsNotificationError]);
+  useEffect(() => {
+    if (!teamsContext.host || !teamsSubscriptionsReady) return undefined;
+    let active = true;
+    const personIds = presenceNotifications.map(String);
+    enqueueTeamsSubscriptionSync(() => syncTeamsSubscriptions("PUT", personIds))
+      .catch((error) => {
+        if (active) reportTeamsNotificationError(error);
+      });
+    return () => {
+      active = false;
+    };
+  }, [teamsContext.host, teamsSubscriptionsReady, presenceNotifications, syncTeamsSubscriptions, enqueueTeamsSubscriptionSync, reportTeamsNotificationError]);
+  useEffect(() => {
+    if (!teamsContext.host || !teamsSubscriptionsReady || !lastUpdated) return undefined;
+    let active = true;
+    enqueueTeamsSubscriptionSync(async () => {
+      const data = await syncTeamsSubscriptions("GET");
+      if (!active) return;
+      setPresenceNotifications((current) => {
+        const currentIds = current.map(String);
+        return currentIds.length === data.personIds.length &&
+          currentIds.every((id) => data.personIds.includes(id))
+          ? currentIds
+          : data.personIds;
+      });
+    }).catch((error) => {
+      if (active) reportTeamsNotificationError(error);
+    });
+    return () => {
+      active = false;
+    };
+  }, [teamsContext.host, teamsSubscriptionsReady, lastUpdated, syncTeamsSubscriptions, enqueueTeamsSubscriptionSync, reportTeamsNotificationError]);
   useEffect(() => store(FAVORITES_KEY, favorites), [favorites]);
   useEffect(
     () => store(PRESENCE_NOTIFICATIONS_KEY, presenceNotifications),
@@ -494,24 +847,34 @@ export default function App() {
   );
   useEffect(() => store(VIEW_KEY, defaultView), [defaultView]);
 
-  const showSystemNotification = useCallback(async (title, options) => {
-    const registration = notificationRegistrationRef.current;
-    if (registration?.showNotification) {
+  const showPresenceNotification = useCallback(async (title, body, personId) => {
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
       try {
-        await registration.showNotification(title, options);
+        const registration = notificationRegistrationRef.current;
+        if (registration?.showNotification) {
+          await registration.showNotification(title, {
+            body,
+            icon: "/PiperLogo_Black.png",
+            tag: `presence-${personId}`
+          });
+          return;
+        }
+        new Notification(title, { body, icon: "/PiperLogo_Black.png" });
         return;
       } catch (notificationError) {
-        console.warn("Service-Worker-Benachrichtigung fehlgeschlagen.", notificationError);
+        console.warn("Systembenachrichtigung fehlgeschlagen; zeige Hinweis in der App.", notificationError);
       }
     }
-    if (typeof Notification !== "undefined") {
-      new Notification(title, options);
-      return;
-    }
-    throw new Error("Browser unterstützt keine Benachrichtigungen.");
+    setNotificationToast({ title, body });
+    window.clearTimeout(notificationToastTimeoutRef.current);
+    notificationToastTimeoutRef.current = window.setTimeout(() => {
+      setNotificationToast(null);
+    }, 7000);
   }, []);
 
   const load = useCallback(async (showSpinner = false) => {
+    if (loadInProgressRef.current) return;
+    loadInProgressRef.current = true;
     try {
       if (showSpinner) setRefreshing(true);
       const response = await fetch(`${API}/presence-board`, {
@@ -524,7 +887,7 @@ export default function App() {
       }
       const nextPeople = (data.people || []).map(normalize);
       const previousPeople = previousPeopleRef.current;
-      if (previousPeople) {
+      if (previousPeople && !teamsContext.host) {
         const previousById = new Map(previousPeople.map((person) => [String(person.id), person]));
         const changedWatchedPeople = nextPeople.filter((person) => {
           const previous = previousById.get(String(person.id));
@@ -544,11 +907,7 @@ export default function App() {
               person: person.name,
               status: t("phoneFree")
             });
-            await showSystemNotification(title, {
-              body,
-              icon: "/PiperLogo_Black.png",
-              tag: `presence-${person.id}`
-            });
+            await showPresenceNotification(title, body, person.id);
           }));
           const changedIds = new Set(changedWatchedPeople.map((person) => String(person.id)));
           setPresenceNotifications((current) =>
@@ -564,10 +923,11 @@ export default function App() {
       console.error(e);
       setError("apiLoadError");
     } finally {
+      loadInProgressRef.current = false;
       setLoading(false);
       setRefreshing(false);
     }
-  }, [presenceNotifications, showSystemNotification, t]);
+  }, [presenceNotifications, showPresenceNotification, t, teamsContext.host]);
 
   useEffect(() => {
     load();
@@ -592,7 +952,7 @@ export default function App() {
   );
   const departments = useMemo(
     () =>
-      [...new Set(scoped.map((p) => p.department))].sort((a, b) =>
+      [...new Set(scoped.filter((p) => p.company !== MEETING_ROOM_COMPANY).map((p) => p.department))].sort((a, b) =>
         a.localeCompare(b, language)
       ),
     [scoped, language]
@@ -622,21 +982,33 @@ export default function App() {
   const grouped = useMemo(
     () =>
       companies
-        .map((c) => ({
-          ...c,
-          departments: [
-            ...new Set(
-              filtered.filter((p) => p.company === c.id).map((p) => p.department)
-            )
-          ]
-            .sort((a, b) => a.localeCompare(b, language))
-            .map((d) => ({
-              name: d,
-              people: filtered.filter((p) => p.company === c.id && p.department === d)
-            }))
-        }))
-        .filter((c) => c.departments.length),
+        .map((company) => {
+          const peopleInCompany = filtered.filter((person) => person.company === company.id);
+          return {
+            ...company,
+            people: peopleInCompany,
+            departments: company.id === MEETING_ROOM_COMPANY
+              ? []
+              : [...new Set(peopleInCompany.map((person) => person.department))]
+                  .sort((left, right) => left.localeCompare(right, language))
+                  .map((name) => ({
+                    name,
+                    people: peopleInCompany.filter((person) => person.department === name)
+                  }))
+          };
+        })
+        .filter((company) => company.id === MEETING_ROOM_COMPANY
+          ? company.people.length > 0
+          : company.departments.length > 0),
     [filtered, language]
+  );
+  const displayedGroups = useMemo(
+    () => view === "all"
+      ? [...grouped].sort((left, right) =>
+          Number(right.id === MEETING_ROOM_COMPANY) - Number(left.id === MEETING_ROOM_COMPANY)
+        )
+      : grouped,
+    [grouped, view]
   );
   const favoriteGroupSections = useMemo(() => {
     const assignments = favoriteGroupsData.assignments;
@@ -662,6 +1034,36 @@ export default function App() {
       : id === "favorites"
         ? decorated.filter((p) => p.favorite).length
         : decorated.filter((p) => p.company === id).length;
+  const collapseAllSections = () => {
+    if (view === "favorites") {
+      setCollapsedFavoriteGroups((current) => ({
+        ...current,
+        ...Object.fromEntries(favoriteGroupSections.map((group) => [group.id, true]))
+      }));
+      return;
+    }
+    setCollapsedCompanies((current) => ({
+      ...current,
+      ...Object.fromEntries(displayedGroups.map((company) => [company.id, true]))
+    }));
+    setCollapsedDepartments((current) => ({
+      ...current,
+      ...Object.fromEntries(displayedGroups.flatMap((company) =>
+        company.departments.map((group) => [`${company.id}:${group.name}`, true])
+      ))
+    }));
+  };
+  const expandAllSections = () => {
+    if (view === "favorites") {
+      setCollapsedFavoriteGroups((current) => ({
+        ...current,
+        ...Object.fromEntries(favoriteGroupSections.map((group) => [group.id, false]))
+      }));
+      return;
+    }
+    setCollapsedCompanies({});
+    setCollapsedDepartments({});
+  };
   const toggleFavorite = (id) => {
     const removingFavorite = favorites.includes(id);
     setFavorites((current) =>
@@ -677,22 +1079,10 @@ export default function App() {
       });
     }
   };
-  const togglePresenceNotification = async (person) => {
+  const togglePresenceNotification = (person) => {
     const personId = String(person.id);
     if (presenceNotifications.includes(personId)) {
       setPresenceNotifications((current) => current.filter((id) => String(id) !== personId));
-      return;
-    }
-    if (!("Notification" in window)) {
-      window.alert(t("presenceNotificationUnsupported"));
-      return;
-    }
-    const permission =
-      Notification.permission === "default"
-        ? await Notification.requestPermission()
-        : Notification.permission;
-    if (permission !== "granted") {
-      window.alert(t("presenceNotificationPermissionDenied"));
       return;
     }
     setPresenceNotifications((current) =>
@@ -875,7 +1265,16 @@ export default function App() {
             {[
               { id: "all", label: t("all"), icon: Building2 },
               { id: "favorites", label: t("favorites"), icon: Star },
-              ...companies.map((c) => ({ id: c.id, label: c.id }))
+              ...companies
+                .filter((company) => company.id !== MISSING_COMPANY || navCount(MISSING_COMPANY) > 0)
+                .map((c) => ({
+                  id: c.id,
+                  label: c.id === MISSING_COMPANY
+                    ? t("companyMissing")
+                    : c.id === MEETING_ROOM_COMPANY
+                      ? t("meetingRoomCompany")
+                      : c.id
+                }))
             ].map((item) => {
               const Icon = item.icon;
               return (
@@ -908,6 +1307,26 @@ export default function App() {
             <option value="name-desc">{t("sortNameDesc")}</option>
             <option value="availability">{t("sortAvailability")}</option>
           </select>
+          <div className="accordion-actions">
+            <button
+              className="icon-button accordion-action-button"
+              type="button"
+              title={t("collapseAll")}
+              aria-label={t("collapseAll")}
+              onClick={collapseAllSections}
+            >
+              <ChevronsUp size={15} />
+            </button>
+            <button
+              className="icon-button accordion-action-button"
+              type="button"
+              title={t("expandAll")}
+              aria-label={t("expandAll")}
+              onClick={expandAllSections}
+            >
+              <ChevronsDown size={15} />
+            </button>
+          </div>
         </div>
         {filtersOpen && (
           <div className="filter-panel">
@@ -1163,54 +1582,127 @@ export default function App() {
                       </form>
                     )}
                     <div className="people-grid">
-                      {sortPeople(group.people, sortOrder, language).map((person) => (
-                        <PersonCard
-                          key={person.id}
-                          person={person}
-                          company={companies.find((item) => item.id === person.company) || companies[0]}
-                          favorite={person.favorite}
-                          onFavorite={toggleFavorite}
-                          watchingPresence={presenceNotifications.includes(String(person.id))}
-                          onWatchPresence={togglePresenceNotification}
-                          t={t}
-                        />
-                      ))}
+                      {sortPeople(group.people, sortOrder, language).map((person) =>
+                        person.company === MEETING_ROOM_COMPANY ? (
+                          <ResourceCard
+                            key={person.id}
+                            person={person}
+                            onOpenCalendar={setResourceCalendarPerson}
+                            onOpenInfo={setResourceInfoPerson}
+                            t={t}
+                            language={language}
+                          />
+                        ) : (
+                          <PersonCard
+                            key={person.id}
+                            person={person}
+                            company={companies.find((item) => item.id === person.company) || companies[0]}
+                            favorite={person.favorite}
+                            onFavorite={toggleFavorite}
+                            watchingPresence={presenceNotifications.includes(String(person.id))}
+                            onWatchPresence={togglePresenceNotification}
+                            t={t}
+                          />
+                        )
+                      )}
                     </div>
                 </div>
               </section>
             ))
-          : grouped.map((company) => (
-              <section className="company-section" key={company.id}>
-                <header>
-                  <i style={{ backgroundColor: company.color }} />
-                  <h2>{company.name}</h2>
-                </header>
-                {company.departments.map((group) => (
-                  <div className="department" key={group.name}>
-                    <h3>
-                      {group.name === MISSING_DEPARTMENT
+          : displayedGroups.map((company) => {
+              const companyCollapsed = Boolean(collapsedCompanies[company.id]);
+              const companyContentId = `company-content-${company.id}`;
+              const companyName = company.id === MISSING_COMPANY
+                ? t("companyMissing")
+                : company.id === MEETING_ROOM_COMPANY
+                  ? t("meetingRoomCompany")
+                  : company.name;
+
+              return (
+                <section className="company-section" key={company.id}>
+                  <header>
+                    <i style={{ backgroundColor: company.color }} />
+                    <button
+                      className="company-collapse-toggle"
+                      type="button"
+                      aria-expanded={!companyCollapsed}
+                      aria-controls={companyContentId}
+                      title={t(companyCollapsed ? "expandCompany" : "collapseCompany")}
+                      onClick={() => setCollapsedCompanies((current) => ({
+                        ...current,
+                        [company.id]: !current[company.id]
+                      }))}
+                    >
+                      <ChevronDown className={`collapse-chevron${companyCollapsed ? " is-collapsed" : ""}`} size={15} />
+                      <h2>{companyName}</h2>
+                    </button>
+                  </header>
+                  <div id={companyContentId} hidden={companyCollapsed}>
+                    {company.id === MEETING_ROOM_COMPANY ? (
+                      <div className="people-grid">
+                        {sortPeople(company.people, sortOrder, language).map((person) => (
+                          <ResourceCard
+                            key={person.id}
+                            person={person}
+                            onOpenCalendar={setResourceCalendarPerson}
+                            onOpenInfo={setResourceInfoPerson}
+                            t={t}
+                            language={language}
+                          />
+                        ))}
+                      </div>
+                    ) : company.departments.map((group) => {
+                      const departmentKey = `${company.id}:${group.name}`;
+                      const departmentCollapsed = Boolean(collapsedDepartments[departmentKey]);
+                      const departmentContentId = `department-content-${company.id}-${encodeURIComponent(group.name)}`;
+                      const departmentName = group.name === MISSING_DEPARTMENT
                         ? t("departmentMissing")
-                        : group.name}{" "}
-                      <span>({group.people.length})</span>
-                    </h3>
-                    <div className="people-grid">
-                      {sortPeople(group.people, sortOrder, language).map((person) => (
-                        <PersonCard
-                          key={person.id}
-                          person={person}
-                          company={company}
-                          favorite={person.favorite}
-                          onFavorite={toggleFavorite}
-                          watchingPresence={presenceNotifications.includes(String(person.id))}
-                          onWatchPresence={togglePresenceNotification}
-                          t={t}
-                        />
-                      ))}
-                    </div>
+                        : group.name;
+                      const departmentHeading = (
+                        <>
+                          {departmentName} <span>({group.people.length})</span>
+                        </>
+                      );
+
+                      return (
+                        <div className="department" key={departmentKey}>
+                          <button
+                            className="department-collapse-toggle"
+                            type="button"
+                            aria-expanded={!departmentCollapsed}
+                            aria-controls={departmentContentId}
+                            title={t(departmentCollapsed ? "expandDepartment" : "collapseDepartment")}
+                            onClick={() => setCollapsedDepartments((current) => ({
+                              ...current,
+                              [departmentKey]: !current[departmentKey]
+                            }))}
+                          >
+                            <ChevronDown className={`collapse-chevron${departmentCollapsed ? " is-collapsed" : ""}`} size={14} />
+                            <h3>{departmentHeading}</h3>
+                          </button>
+                          <div id={departmentContentId} hidden={departmentCollapsed}>
+                            <div className="people-grid">
+                              {sortPeople(group.people, sortOrder, language).map((person) => (
+                                <PersonCard
+                                  key={person.id}
+                                  person={person}
+                                  company={company}
+                                  favorite={person.favorite}
+                                  onFavorite={toggleFavorite}
+                                  watchingPresence={presenceNotifications.includes(String(person.id))}
+                                  onWatchPresence={togglePresenceNotification}
+                                  t={t}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                ))}
-              </section>
-            ))}
+                </section>
+              );
+            })}
         {(view === "favorites"
           ? filtered.length === 0
           : grouped.length === 0) && (
@@ -1223,11 +1715,43 @@ export default function App() {
           </div>
         )}
       </main>
+      {notificationToast && (
+        <div className="notification-toast" role="status" aria-live="polite">
+          <div>
+            <strong>{notificationToast.title}</strong>
+            <p>{notificationToast.body}</p>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            title={t("close")}
+            aria-label={t("close")}
+            onClick={() => {
+              window.clearTimeout(notificationToastTimeoutRef.current);
+              setNotificationToast(null);
+            }}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
       <InfoModal
         open={infoOpen}
         onClose={() => setInfoOpen(false)}
         defaultView={defaultView}
         onDefaultView={chooseDefault}
+        t={t}
+      />
+      <ResourceCalendarModal
+        person={resourceCalendarPerson}
+        onClose={() => setResourceCalendarPerson(null)}
+        t={t}
+        language={language}
+      />
+      <ResourceInfoModal
+        key={resourceInfoPerson?.id || "closed"}
+        person={resourceInfoPerson}
+        onClose={() => setResourceInfoPerson(null)}
         t={t}
       />
     </div>

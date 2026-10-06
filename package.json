@@ -6,22 +6,21 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "api": "node server/server.js"
   },
   "dependencies": {
     "@azure/identity": "^4.13.3",
+    "@microsoft/teams-js": "^2.57.0",
     "@vitejs/plugin-react": "latest",
     "cors": "^2.8.6",
     "dotenv": "^18.0.4",
     "express": "^5.2.1",
+    "jose": "^6.2.12",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
     "typescript": "latest",
     "vite": "latest"
-  },
-  "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "api": "node server/server.js"
   }
 }

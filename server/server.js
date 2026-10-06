@@ -2,11 +2,15 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { ClientSecretCredential } from "@azure/identity";
+import { createTeamsNotificationService } from "./teams-notifications.js";
 
 const app=express();
 const PORT=Number(process.env.PORT||3001);
 const GRAPH=process.env.GRAPH_BASE_URL||"https://graph.microsoft.com/v1.0";
 const GROUP_NAME=process.env.PRESENCE_GROUP_NAME||"ShowInPresenceBoard";
+const MEETING_ROOM_COMPANY="__meeting_rooms__";
+const MISSING_COMPANY="__missing_company__";
+const MISSING_DEPARTMENT="__missing_department__";
 const credential=new ClientSecretCredential(process.env.TENANT_ID,process.env.CLIENT_ID,process.env.CLIENT_SECRET);
 app.use(cors()); app.use(express.json());
 
@@ -55,21 +59,27 @@ function parseGraphDateTime(value){
     return new Date(dateTime);
   }
 }
-async function calendar(userId){
-  const start=new Date(),end=new Date(start);end.setDate(end.getDate()+1);
+async function calendar(userId,rangeDays=1){
+  const now=new Date(),start=new Date(now),end=new Date(now);
+  start.setDate(start.getDate()-1);
+  end.setDate(end.getDate()+rangeDays);
   const path=`/users/${userId}/calendar/calendarView?startDateTime=${encodeURIComponent(start.toISOString())}&endDateTime=${encodeURIComponent(end.toISOString())}&$select=id,start,end,showAs,isAllDay,isCancelled&$orderby=start/dateTime`;
   return collection(path,{Prefer:'outlook.timezone="Europe/Berlin"'});
 }
 async function mailboxSettings(userId){
   return graph(`/users/${encodeURIComponent(userId)}/mailboxSettings/automaticRepliesSetting`,{headers:{Prefer:'outlook.timezone="UTC"'}});
 }
+async function roomPlaces(){
+  return collection("/places/microsoft.graph.room?$select=emailAddress,capacity,building,floorNumber,floorLabel,label");
+}
 function mapCalendar(events){
-  const now=new Date(); const list=(events||[]).filter(e=>!e.isCancelled).map(e=>({...e,s:new Date(e.start?.dateTime),e:new Date(e.end?.dateTime)})).filter(e=>!Number.isNaN(e.s.getTime())&&!Number.isNaN(e.e.getTime())).sort((a,b)=>a.s-b.s);
+  const now=new Date(); const list=(events||[]).filter(e=>!e.isCancelled).map(e=>({...e,s:parseGraphDateTime(e.start),e:parseGraphDateTime(e.end)})).filter(e=>!Number.isNaN(e.s.getTime())&&!Number.isNaN(e.e.getTime())).sort((a,b)=>a.s-b.s);
   const today=formatDate(now);
   const oof=list.find(e=>e.showAs==="oof"&&e.s<=now&&e.e>now);
   const current=list.find(e=>e.showAs!=="oof"&&!e.isAllDay&&e.s<=now&&e.e>now);
   const next=list.find(e=>e.showAs!=="oof"&&!e.isAllDay&&e.s>now&&formatDate(e.s)===today);
-  return {currentMeetingEnd:current?formatTime(current.e):null,currentMeetingShowAs:current?.showAs||null,meetingReachable:current?current.showAs==="free":true,nextMeeting:!current&&next?formatTime(next.s):null,oofAbsence:oof?{returnDate:formatDate(oof.e)}:null};
+  const schedule=list.map(event=>({start:event.s.toISOString(),end:event.e.toISOString(),showAs:event.showAs||"busy",isAllDay:Boolean(event.isAllDay)}));
+  return {currentMeetingEnd:current?formatTime(current.e):null,currentMeetingShowAs:current?.showAs||null,meetingReachable:current?current.showAs==="free":true,nextMeeting:!current&&next?formatTime(next.s):null,oofAbsence:oof?{returnDate:formatDate(oof.e)}:null,schedule};
 }
 function plainText(value=""){
   return String(value)
@@ -129,27 +139,52 @@ function mapPresence(p){
   return {presence,phone,availability,activity,location,outOfOffice};
 }
 function initials(u){if(u.givenName||u.surname)return `${u.givenName?.[0]||""}${u.surname?.[0]||""}`.toUpperCase();return (u.displayName||"").replace(","," ").split(/\s+/).filter(Boolean).slice(0,2).map(x=>x[0]).join("").toUpperCase()}
-function company(name=""){const s=name.toLowerCase();if(s.includes("global aviation")||s.includes("gapp"))return"GAPP";if(s.includes("european aviation")||s.includes("eac2")||s.includes("eacc"))return"EAC2";return"PAG"}
+function company(name=""){const s=String(name||"").trim().toLowerCase();if(s.includes("meeting room"))return MEETING_ROOM_COMPANY;if(!s)return MISSING_COMPANY;if(s.includes("global aviation")||s.includes("gapp"))return"GAPP";if(s.includes("european aviation")||s.includes("eac2")||s.includes("eacc"))return"EAC2";return"PAG"}
 async function build(){
   const {group,members}=await getMembers(); const ps=await presences(members.map(x=>x.id)); const byId=new Map(ps.map(x=>[x.id,x]));
-  const calendarResults=await Promise.allSettled(members.map(async u=>[u.id,await calendar(u.id)]));const calendars=new Map(calendarResults.filter(x=>x.status==="fulfilled").map(x=>x.value));
+  const roomMembers=members.filter(u=>company(u.companyName)===MEETING_ROOM_COMPANY);
+  const calendarResults=await Promise.allSettled(members.map(async u=>[u.id,await calendar(u.id,company(u.companyName)===MEETING_ROOM_COMPANY?30:1)]));const calendars=new Map(calendarResults.filter(x=>x.status==="fulfilled").map(x=>x.value));
+  const roomIds=new Set(roomMembers.map(u=>u.id));
+  const failedRoomCalendars=calendarResults.filter((result,index)=>result.status==="rejected"&&roomIds.has(members[index].id));
+  if(failedRoomCalendars.length)console.warn(`[presence-board] Calendar.Read failed for ${failedRoomCalendars.length}/${roomMembers.length} rooms: ${failedRoomCalendars[0].reason?.message||"unknown Graph error"}`);
+  const places=new Map();
+  if(roomMembers.length){
+    try{
+      const results=await roomPlaces();
+      for(const place of results){if(place.emailAddress)places.set(place.emailAddress.toLowerCase(),place)}
+    }catch(error){
+      console.warn(`[presence-board] Places.Read failed: ${error.message||"unknown Graph error"}`);
+    }
+  }
   const mailboxResults=await Promise.allSettled(members.map(async u=>[u.id,await mailboxSettings(u.id)]));
-  const mailboxFailures=mailboxResults.filter(x=>x.status==="rejected");
-  if(mailboxFailures.length)console.warn(`[presence-board] MailboxSettings.Read failed for ${mailboxFailures.length}/${members.length} users: ${mailboxFailures[0].reason?.message||"unknown Graph error"}`);
+  const mailboxFailures=mailboxResults.flatMap((result,index)=>result.status==="rejected"?[{user:members[index],error:result.reason}]:[]);
+  if(mailboxFailures.length){
+    const details=mailboxFailures.map(({user,error})=>{
+      const mailbox=user.mail||user.userPrincipalName;
+      const identity=user.displayName||mailbox||user.id;
+      return `${identity}${mailbox&&mailbox!==identity?` (${mailbox})`:""}: ${error?.message||"unknown Graph error"}`;
+    }).join("; ");
+    console.warn(`[presence-board] MailboxSettings.Read failed for ${mailboxFailures.length}/${members.length} users: ${details}`);
+  }
   const mailboxes=new Map(mailboxResults.filter(x=>x.status==="fulfilled").map(x=>x.value));
   const people=members.map(u=>{
-    const p=mapPresence(byId.get(u.id)),c=mapCalendar(calendars.get(u.id)||[]),sageAbsence=null;
+    const p=mapPresence(byId.get(u.id)),c=mapCalendar(calendars.get(u.id)||[]),sageAbsence=null,companyKey=company(u.companyName),place=places.get((u.mail||u.userPrincipalName||"").toLowerCase());
+    const resourceLocationDescription=[u.officeLocation,place?.building,place?.floorLabel||place?.floorNumber,place?.label].filter(Boolean).map(String).filter((value,index,values)=>values.indexOf(value)===index).join(" · ");
     const automaticReplies=mapAutomaticReplies(mailboxes.get(u.id));
     const automaticRepliesAbsence=automaticReplies?.active?{returnDate:automaticReplies.returnDate,note:automaticReplies.note}:null;
     const oofFromFallback=sageAbsence?null:c.oofAbsence?{...c.oofAbsence,note:automaticReplies?.note||null}:p.outOfOffice?{returnDate:null,note:automaticReplies?.note||null}:null;
     const oofAbsence=sageAbsence?null:automaticReplies?.configured?automaticRepliesAbsence:oofFromFallback;
     const absent=Boolean(sageAbsence||oofAbsence);
-    return {id:u.id,name:u.displayName||"",initials:initials(u),email:u.mail||u.userPrincipalName||"",department:u.department||"Ohne Abteilung",company:company(u.companyName),companyName:u.companyName||"",role:u.jobTitle||"",officeLocation:u.officeLocation||"",photoUrl:`/api/users/${u.id}/photo`,location:p.location,presence:p.presence,availability:p.availability,activity:p.activity,outOfOffice:p.outOfOffice,outOfOfficeNote:automaticReplies?.note||null,automaticRepliesStatus:automaticReplies?.status||"unavailable",automaticRepliesActive:Boolean(automaticReplies?.active),phone:absent?"free":p.phone,currentMeetingEnd:absent?null:c.currentMeetingEnd,currentMeetingShowAs:absent?null:c.currentMeetingShowAs,meetingReachable:absent?false:c.meetingReachable,nextMeeting:absent||c.currentMeetingEnd?null:c.nextMeeting,sageAbsence,oofAbsence};
+    return {id:u.id,name:u.displayName||"",initials:initials(u),email:u.mail||u.userPrincipalName||"",department:u.department||MISSING_DEPARTMENT,company:companyKey,companyName:u.companyName||"",role:u.jobTitle||"",officeLocation:u.officeLocation||"",resourceCapacity:companyKey===MEETING_ROOM_COMPANY?place?.capacity??null:undefined,resourceLocationDescription:companyKey===MEETING_ROOM_COMPANY?resourceLocationDescription||null:undefined,photoUrl:`/api/users/${u.id}/photo`,location:p.location,presence:p.presence,availability:p.availability,activity:p.activity,outOfOffice:p.outOfOffice,outOfOfficeNote:automaticReplies?.note||null,automaticRepliesStatus:automaticReplies?.status||"unavailable",automaticRepliesActive:Boolean(automaticReplies?.active),phone:absent?"free":p.phone,currentMeetingEnd:absent?null:c.currentMeetingEnd,currentMeetingShowAs:absent?null:c.currentMeetingShowAs,meetingReachable:absent?false:c.meetingReachable,nextMeeting:absent||c.currentMeetingEnd?null:c.nextMeeting,resourceSchedule:companyKey===MEETING_ROOM_COMPANY?c.schedule:undefined,resourceCalendarAvailable:companyKey===MEETING_ROOM_COMPANY?calendars.has(u.id):undefined,sageAbsence,oofAbsence};
   });
   return {success:true,generatedAt:new Date().toISOString(),group,count:people.length,people};
 }
-app.get("/api/health",(req,res)=>res.json({success:true,status:"ok",generatedAt:new Date().toISOString()}));
+const teamsNotifications=createTeamsNotificationService({getMembers,presences,mapPresence,graph});
+app.get("/api/health",(req,res)=>res.json({success:true,status:"ok",generatedAt:new Date().toISOString(),teamsNotifications:teamsNotifications.health()}));
 app.get("/api/presence-board",async(req,res)=>{try{res.set("Cache-Control","no-store");res.json(await build())}catch(e){console.error(e);res.status(500).json({success:false,error:"Presence-Daten konnten nicht geladen werden.",details:e.message})}});
+app.get("/api/teams/notifications/subscriptions",async(req,res)=>{try{res.set("Cache-Control","no-store");res.json({personIds:await teamsNotifications.getSubscriptions(req.get("authorization"))})}catch(error){res.status(error.status||500).json({error:error.status?error.message:"Teams subscriptions could not be loaded."})}});
+app.put("/api/teams/notifications/subscriptions",async(req,res)=>{try{const activeSubscriptions=await teamsNotifications.replaceSubscriptions(req.get("authorization"),req.body?.personIds);res.json({success:true,activeSubscriptions})}catch(error){res.status(error.status||500).json({error:error.status?error.message:"Teams subscriptions could not be saved."})}});
 app.get("/api/users/:userId/photo",async(req,res)=>{try{const response=await fetch(`${GRAPH}/users/${encodeURIComponent(req.params.userId)}/photo/$value`,{headers:{Authorization:`Bearer ${await token()}`}});if(!response.ok)return res.sendStatus(404);res.set("Content-Type",response.headers.get("content-type")||"image/jpeg");res.set("Cache-Control","private, max-age=86400");res.send(Buffer.from(await response.arrayBuffer()))}catch{return res.sendStatus(404)}});
 app.use((req,res)=>res.status(404).json({success:false,error:"API-Endpunkt nicht gefunden.",path:req.originalUrl}));
 app.listen(PORT,()=>console.log(`Crew Presence Board API läuft auf Port ${PORT}`));
+teamsNotifications.start();

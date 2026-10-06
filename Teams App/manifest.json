@@ -1,25 +1,25 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
   "manifestVersion": "1.17",
-  "version": "1.0.1",
+  "version": "1.0.8",
 
   "id": "7d4fbe60-7f0d-4f4c-93c9-123456789001",
 
   "developer": {
-    "name": "ATEC IT",
+    "name": "Piper Deutschland AG | IT",
     "websiteUrl": "https://llrwffc6-5173.euw.devtunnels.ms",
     "privacyUrl": "https://llrwffc6-5173.euw.devtunnels.ms",
     "termsOfUseUrl": "https://llrwffc6-5173.euw.devtunnels.ms"
   },
 
   "name": {
-    "short": "Crew Presence",
+    "short": "Presence",
     "full": "Crew Presence Board"
   },
 
   "description": {
-    "short": "Teams Presence Dashboard",
-    "full": "Presence Dashboard für PAG, GAPP und EAC2"
+    "short": "Employee presence, availability, and contact information in one place.",
+    "full": "Crew Presence Board is a Piper Teams application that provides real-time visibility into employee availability, presence status, phone activity, office location, and contact information. Designed for the Piper Deutschland AG Group, it helps employees connect faster, improve collaboration, and stay informed across teams and locations."
   },
 
   "icons": {
@@ -42,6 +42,21 @@
   "permissions": [
     "identity"
   ],
+
+  "webApplicationInfo": {
+    "id": "286c4601-7516-40f4-a148-9062e4390638",
+    "resource": "api://llrwffc6-5173.euw.devtunnels.ms/286c4601-7516-40f4-a148-9062e4390638"
+  },
+
+  "activities": {
+    "activityTypes": [
+      {
+        "type": "personAvailableAgain",
+        "description": "A watched person is available again",
+        "templateText": "{person} ist wieder verfügbar"
+      }
+    ]
+  },
 
   "validDomains": [
     "llrwffc6-5173.euw.devtunnels.ms"
