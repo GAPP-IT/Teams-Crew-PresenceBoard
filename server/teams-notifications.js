@@ -7,16 +7,8 @@ const ssoResource = process.env.TEAMS_SSO_RESOURCE;
 const appUrl = process.env.TEAMS_APP_URL;
 const storePath = resolve(process.env.TEAMS_NOTIFICATIONS_STORE_PATH || "data/teams-notifications.json");
 const pollIntervalMs = Math.max(15000, Number(process.env.TEAMS_NOTIFICATION_POLL_INTERVAL_MS) || 30000);
-const configured = Boolean(
-  tenantId &&
-  process.env.CLIENT_ID &&
-  process.env.CLIENT_SECRET &&
-  ssoResource &&
-  appUrl?.startsWith("https://")
-);
-const signingKeys = tenantId
-  ? createRemoteJWKSet(new URL(`https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`))
-  : null;
+const configured = Boolean(tenantId && process.env.CLIENT_ID && process.env.CLIENT_SECRET && ssoResource && appUrl?.startsWith("https://"));
+const signingKeys = tenantId ? createRemoteJWKSet(new URL(`https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`)) : null;
 
 let storedState = { subscriptions: {} };
 let loadPromise;
@@ -35,9 +27,7 @@ async function loadStore() {
       .then((content) => {
         const parsed = JSON.parse(content);
         storedState = {
-          subscriptions: parsed?.subscriptions && typeof parsed.subscriptions === "object"
-            ? parsed.subscriptions
-            : {}
+          subscriptions: parsed?.subscriptions && typeof parsed.subscriptions === "object" ? parsed.subscriptions : {},
         };
       })
       .catch((error) => {
@@ -49,12 +39,14 @@ async function loadStore() {
 
 function persistStore() {
   const content = JSON.stringify(storedState, null, 2);
-  writeQueue = writeQueue.catch(() => {}).then(async () => {
-    await mkdir(dirname(storePath), { recursive: true });
-    const temporaryPath = `${storePath}.${process.pid}.tmp`;
-    await writeFile(temporaryPath, content, { encoding: "utf8", mode: 0o600 });
-    await rename(temporaryPath, storePath);
-  });
+  writeQueue = writeQueue
+    .catch(() => {})
+    .then(async () => {
+      await mkdir(dirname(storePath), { recursive: true });
+      const temporaryPath = `${storePath}.${process.pid}.tmp`;
+      await writeFile(temporaryPath, content, { encoding: "utf8", mode: 0o600 });
+      await rename(temporaryPath, storePath);
+    });
   return writeQueue;
 }
 
@@ -70,12 +62,9 @@ async function resolveTeamsUser(authorization = "") {
   try {
     const { payload } = await jwtVerify(assertion, signingKeys, {
       audience: ssoResource,
-      issuer: [
-        `https://login.microsoftonline.com/${tenantId}/v2.0`,
-        `https://sts.windows.net/${tenantId}/`
-      ],
+      issuer: [`https://login.microsoftonline.com/${tenantId}/v2.0`, `https://sts.windows.net/${tenantId}/`],
       algorithms: ["RS256"],
-      clockTolerance: 5
+      clockTolerance: 5,
     });
     if (payload.tid !== tenantId || typeof payload.oid !== "string") {
       throw new Error("Missing Teams user identity.");
@@ -143,12 +132,12 @@ export function createTeamsNotificationService({ getMembers, presences, mapPrese
         topic: {
           source: "text",
           value: person.name,
-          webUrl: appUrl
+          webUrl: appUrl,
         },
         activityType: "personAvailableAgain",
         previewText: { content: `${person.name} ist wieder verfügbar.` },
-        templateParameters: [{ name: "person", value: person.name }]
-      })
+        templateParameters: [{ name: "person", value: person.name }],
+      }),
     });
   }
 
@@ -157,13 +146,11 @@ export function createTeamsNotificationService({ getMembers, presences, mapPrese
     polling = true;
     try {
       const { members } = await getMembers();
-      const presencesById = new Map(
-        (await presences(members.map((member) => member.id))).map((presence) => [String(presence.id), presence])
-      );
+      const presencesById = new Map((await presences(members.map((member) => member.id))).map((presence) => [String(presence.id), presence]));
       const people = members.map((member) => ({
         id: String(member.id),
         name: member.displayName || "",
-        ...mapPresence(presencesById.get(String(member.id)))
+        ...mapPresence(presencesById.get(String(member.id))),
       }));
       const nextStatuses = new Map(people.map((person) => [person.id, notificationStatus(person)]));
 
@@ -203,8 +190,7 @@ export function createTeamsNotificationService({ getMembers, presences, mapPrese
 
   return {
     getSubscriptions: subscriptionsFor,
-    replaceSubscriptions: (authorization, personIds) =>
-      replaceSubscriptions(authorization, personIds, getMembers),
+    replaceSubscriptions: (authorization, personIds) => replaceSubscriptions(authorization, personIds, getMembers),
     start() {
       if (!configured || pollTimer) return;
       void poll();
@@ -221,8 +207,8 @@ export function createTeamsNotificationService({ getMembers, presences, mapPrese
         lastPollAt,
         lastPollError,
         lastNotificationSentAt,
-        lastNotificationError
+        lastNotificationError,
       };
-    }
+    },
   };
 }

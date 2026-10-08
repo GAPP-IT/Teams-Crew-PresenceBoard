@@ -6,6 +6,7 @@ import {
   RefreshCw, Search, SlidersHorizontal, Plus, Star, Sun, Tag, Trash2, Users, Video, VideoOff, X, Bell, BellOff
 } from "lucide-react";
 import { translate } from "./translations.js";
+import { apiFetch } from "./services/api";
 
 const API = import.meta.env.VITE_API_BASE_URL || "/api";
 const USER_GUIDE_URL = "";
@@ -877,10 +878,27 @@ export default function App() {
     loadInProgressRef.current = true;
     try {
       if (showSpinner) setRefreshing(true);
-      const response = await fetch(`${API}/presence-board`, {
+      /*const response = await fetch(`${API}/presence-board`, {
         cache: "no-store",
         headers: { Accept: "application/json" }
-      });
+      });*/
+
+        const response =
+          await apiFetch("/api/presence-board");
+
+        if (!response.ok) {
+          const error = await response
+            .json()
+            .catch(() => null);
+
+          throw new Error(
+            error?.error ||
+              `HTTP ${response.status}`,
+          );
+        }
+
+
+
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.details || data.error || "API konnte nicht geladen werden.");
